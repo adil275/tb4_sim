@@ -1,73 +1,70 @@
 import os
-import pathlib
+import re
 import launch
 import xacro
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, ExecuteProcess, TimerAction
 from launch.substitutions import LaunchConfiguration
-from launch.substitutions.path_join_substitution import PathJoinSubstitution
 from launch_ros.actions import Node
+
 from webots_ros2_driver.urdf_spawner import URDFSpawner, get_webots_driver_node
-from webots_ros2_driver.webots_launcher import WebotsLauncher, Ros2SupervisorLauncher
+from webots_ros2_driver.webots_launcher import WebotsLauncher
+
 
 def get_ros2_nodes(*args):
-
-    # Parameters
     package_dir = get_package_share_directory('tb4_sim')
     tb4_xacro_path = os.path.join(package_dir, 'resource', 'tb4_webots.xacro')
-    tb4_description = xacro.process_file(tb4_xacro_path, mappings={'name': 'turtlebot4'}).toxml()
+    tb4_description = xacro.process_file(
+        tb4_xacro_path,
+        mappings={'name': 'turtlebot4'}
+    ).toxml()
     ros2_control_params = os.path.join(package_dir, 'resource', 'tb4_control.yaml')
-    
-    # URDF spawner
+
     spawn_URDF_tb4 = URDFSpawner(
         name='turtlebot4',
         robot_description=tb4_description,
         relative_path_prefix=os.path.join(package_dir, 'resource'),
-        translation='6.779572877942763 2.7203689810650897 -0.005743749274182641',
-        rotation='0.013068751525735459 -0.10002895929371924 0.9948986958661541 0.2630261491930291',
+        translation='6.66 0.327 -0.00564',
+        rotation='0.00802 -0.0842 0.996 0.263',
     )
 
-    # Remaps
     mappings = [('/diffdrive_controller/cmd_vel_unstamped', '/cmd_vel')]
-    if 'ROS_DISTRO' in os.environ and os.environ['ROS_DISTRO'] in ['humble', 'rolling']:
+    if os.environ.get('ROS_DISTRO') in ['humble', 'rolling']:
         mappings.append(('/diffdrive_controller/odom', '/odom'))
 
-    # Driver nodes
     tb4_driver = Node(
         package='webots_ros2_driver',
         executable='driver',
         output='screen',
         additional_env={'WEBOTS_CONTROLLER_URL': 'turtlebot4'},
         parameters=[
-            {'robot_description': tb4_description,
-             'use_sim_time': True,
-             'set_robot_state_publisher': True},
-            ros2_control_params
+            {
+                'robot_description': tb4_description,
+                'use_sim_time': True,
+                'set_robot_state_publisher': True,
+            },
+            ros2_control_params,
         ],
-        remappings=mappings
+        remappings=mappings,
     )
 
-    # Other ros2 nodes
-    # TODO: Revert once the https://github.com/ros-controls/ros2_control/pull/444 PR gets into the release
-    controller_manager_timeout = ['--controller-manager-timeout', '75']
-    controller_manager_prefix = 'python.exe' if os.name == 'nt' else ''
-
-    # Diffdrive controller spawner
-    diffdrive_controller_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
+    # Ball robot extern controller
+    ball_robot_driver = ExecuteProcess(
+        cmd=[
+            'python3',
+            os.path.join(
+                get_package_share_directory('tb4_sim'),
+                'controllers', 'ball_robot', 'ball_robot.py'
+            )
+        ],
+        additional_env={
+            'WEBOTS_CONTROLLER_URL': 'ipc://1234/ball_robot',
+            'WEBOTS_HOME': '/usr/local/webots',
+            'LD_LIBRARY_PATH': '/usr/local/webots/lib/controller',
+        },
         output='screen',
-        prefix=controller_manager_prefix,
-        arguments=['diffdrive_controller'] + controller_manager_timeout,
-    )
-
-    joint_state_broadcaster_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
-        output='screen',
-        prefix=controller_manager_prefix,
-        arguments=['joint_state_broadcaster'] + controller_manager_timeout,
     )
 
     robot_state_publisher = Node(
@@ -86,18 +83,59 @@ def get_ros2_nodes(*args):
         arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'base_footprint'],
     )
 
-    return [
-        # Request the spawn of the URDF robot
-        spawn_URDF_tb4,
+    # Replace broken spawner CLI with direct service calls via TimerAction.
+    # The driver needs ~10s to register hardware before controllers can load.
+    load_jsb = TimerAction(period=10.0, actions=[ExecuteProcess(
+        cmd=['ros2', 'service', 'call',
+             '/controller_manager/load_controller',
+             'controller_manager_msgs/srv/LoadController',
+             "{name: 'joint_state_broadcaster'}"],
+        output='screen',
+    )])
 
-        # Other ros2 nodes
-        joint_state_broadcaster_spawner,
-        diffdrive_controller_spawner,
+    configure_jsb = TimerAction(period=12.0, actions=[ExecuteProcess(
+        cmd=['ros2', 'service', 'call',
+             '/controller_manager/configure_controller',
+             'controller_manager_msgs/srv/ConfigureController',
+             "{name: 'joint_state_broadcaster'}"],
+        output='screen',
+    )])
+
+    load_diff = TimerAction(period=14.0, actions=[ExecuteProcess(
+        cmd=['ros2', 'service', 'call',
+             '/controller_manager/load_controller',
+             'controller_manager_msgs/srv/LoadController',
+             "{name: 'diffdrive_controller'}"],
+        output='screen',
+    )])
+
+    configure_diff = TimerAction(period=16.0, actions=[ExecuteProcess(
+        cmd=['ros2', 'service', 'call',
+             '/controller_manager/configure_controller',
+             'controller_manager_msgs/srv/ConfigureController',
+             "{name: 'diffdrive_controller'}"],
+        output='screen',
+    )])
+
+    activate_both = TimerAction(period=18.0, actions=[ExecuteProcess(
+        cmd=['ros2', 'service', 'call',
+             '/controller_manager/switch_controller',
+             'controller_manager_msgs/srv/SwitchController',
+             "{activate_controllers: ['joint_state_broadcaster', 'diffdrive_controller'], "
+             "deactivate_controllers: [], strictness: 1}"],
+        output='screen',
+    )])
+
+    return [
+        spawn_URDF_tb4,
         robot_state_publisher,
         footprint_publisher,
-
-        # Launch the driver node once the URDF robot is spawned.
-        # You might include other nodes to start them with the driver node.
+        ball_robot_driver,
+        load_jsb,
+        configure_jsb,
+        load_diff,
+        configure_diff,
+        activate_both,
         launch.actions.RegisterEventHandler(
             event_handler=launch.event_handlers.OnProcessIO(
                 target_action=spawn_URDF_tb4,
@@ -106,32 +144,44 @@ def get_ros2_nodes(*args):
         ),
     ]
 
-def generate_launch_description():
-    package_dir = get_package_share_directory('tb4_sim')
-    world = LaunchConfiguration('world')
 
-    # Starts Webots
+def launch_webots(context, *args, **kwargs):
+    package_share = get_package_share_directory('tb4_sim')
+    world_file = LaunchConfiguration('world').perform(context)
+    world_path = os.path.join(package_share, 'worlds', world_file)
+
     webots = WebotsLauncher(
-        world=PathJoinSubstitution([package_dir, 'worlds', world]),
-        ros2_supervisor=True
+        world=world_path,
+        ros2_supervisor=True,
     )
 
-    return LaunchDescription([
-        DeclareLaunchArgument(
-            'world',
-            default_value='house.wbt',
-            description='Choose one of the world files from `/webots_ros2_universal_robot/worlds` directory'
-        ),
+    return [
         webots,
-        
-        webots._supervisor, 
-
-        # This action will kill all nodes once the Webots simulation has exited
+        webots._supervisor,
         launch.actions.RegisterEventHandler(
             event_handler=launch.event_handlers.OnProcessExit(
                 target_action=webots,
                 on_exit=[launch.actions.EmitEvent(event=launch.events.Shutdown())],
             )
         ),
+    ]
 
+
+def generate_launch_description():
+    # Ensure controller plugins are findable
+    os.environ['LD_LIBRARY_PATH'] = (
+        '/opt/ros/humble/lib:'
+        + os.environ.get('LD_LIBRARY_PATH', '')
+    )
+    os.environ['AMENT_PREFIX_PATH'] = (
+        '/opt/ros/humble:'
+        + os.environ.get('AMENT_PREFIX_PATH', '')
+    )
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'world',
+            default_value='house.wbt',
+            description='Choose one of the world files from the tb4_sim share directory'
+        ),
+        OpaqueFunction(function=launch_webots),
     ] + get_ros2_nodes())

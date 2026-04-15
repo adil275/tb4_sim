@@ -1,23 +1,48 @@
 """webots_ros2 package setup file."""
 
+from glob import glob
 from setuptools import setup
 
 package_name = 'tb4_sim'
+
 data_files = []
-data_files.append(('share/ament_index/resource_index/packages', ['resource/' + package_name]))
-data_files.append(('share/' + package_name + '/launch', ['launch/tb4_launcher.py']))
-data_files.append(('share/' + package_name + '/resource', [
-    'resource/tb4_raw.urdf',
-    'resource/tb4_webots.xacro',
-    'resource/tb4_control.yaml',
-    'resource/helper.xacro'
-]))
-
-data_files.append(('share/' + package_name + '/worlds', [
-    'worlds/house.wbt',
-]))
-data_files.append(('share/' + package_name, ['package.xml']))
-
+data_files.append((
+    'share/ament_index/resource_index/packages',
+    ['resource/' + package_name]
+))
+data_files.append((
+    'share/' + package_name,
+    ['package.xml']
+))
+data_files.append((
+    'share/' + package_name + '/launch',
+    ['launch/tb4_launcher.py']
+))
+data_files.append((
+    'share/' + package_name + '/resource',
+    [
+        'resource/tb4_raw.urdf',
+        'resource/tb4_webots.xacro',
+        'resource/tb4_control.yaml',
+        'resource/helper.xacro'
+    ]
+))
+data_files.append((
+    'share/' + package_name + '/controllers/ball_robot',
+    ['controllers/ball_robot/ball_robot.py']
+))
+data_files.append((
+    'share/' + package_name + '/worlds',
+    [
+        'worlds/house.wbt',
+        'worlds/mini_office.wbt',
+        'worlds/office.wbt',
+    ]
+))
+data_files.append((
+    'share/' + package_name + '/textures',
+    glob('textures/*')
+))
 
 setup(
     name=package_name,
@@ -37,7 +62,7 @@ setup(
         'Programming Language :: Python',
         'Topic :: Software Development',
     ],
-    description='TurtleBot4 rpbpt ROS2 interface for Webots.',
+    description='TurtleBot4 robot ROS2 interface for Webots.',
     license='Apache License, Version 2.0',
     tests_require=['pytest'],
     entry_points={

@@ -14,7 +14,15 @@
           <updateRate>20</updateRate>
         </ros>
       </device>
-
+      <device reference="rgb_camera" type="Camera">
+        <ros>
+          <topicName>/camera/image_raw</topicName>
+          <cameraInfoTopicName>/camera/camera_info</cameraInfoTopicName>
+          <alwaysOn>true</alwaysOn>
+          <updateRate>15</updateRate>
+          <frameName>oakd_rgb_camera_optical_frame</frameName>
+        </ros>
+      </device>
       <plugin type="webots_ros2_driver::Ros2IMU">
         <enabled>true</enabled>
         <updateRate>50</updateRate>
